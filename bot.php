@@ -23,8 +23,8 @@
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 // Keep the token secret. Anyone with it controls your bot.
-const BOT_TOKEN      = '8673434335:AAEOgdd12k3LK53R9v4aCXTyinxhdKdGP50';
-const WEBHOOK_SECRET = 'deepakbadhe';   // must match secret_token in setWebhook
+define('BOT_TOKEN', getenv('BOT_TOKEN') ?: '');
+define('WEBHOOK_SECRET', getenv('WEBHOOK_SECRET') ?: '');   // must match secret_token in setWebhook
 
 // Only these Telegram IDs can run real commands. Send /id to the bot to find yours.
 const ALLOWED_CHAT_IDS = [

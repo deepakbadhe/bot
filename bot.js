@@ -32,7 +32,7 @@
 const http = require('http');
 
 // ─── CONFIG (from environment) ────────────────────────────────────────────────
-const BOT_TOKEN = '8673434335:AAEOgdd12k3LK53R9v4aCXTyinxhdKdGP5' || '';
+const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const TOOL_URL  = process.env.TOOL_URL  || 'https://cigaop.club/verificationcode/';
 const ALLOWED_CHAT_IDS = (process.env.ALLOWED_CHAT_IDS || '')
   .split(/[\s,]+/)
