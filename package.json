@@ -1,0 +1,13 @@
+{
+  "name": "netflix-tools-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot (long-polling) that fetches Netflix verification codes and password-reset links from the cigaop.club tool. No dependencies.",
+  "main": "bot.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
