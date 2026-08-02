@@ -31,6 +31,7 @@
 
 const http = require('http');
 const { getNetflixInfo, resolveCookiesFromUrl } = require('./nf-account');
+const store = require('./store');
 
 // ─── CONFIG (from environment) ────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -64,6 +65,28 @@ function esc(s) {
 
 function isEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+function shortUrl(u) {
+  u = String(u);
+  return u.length > 60 ? u.slice(0, 57) + '…' : u;
+}
+
+// Send a list of lines as one or more messages, each under Telegram's 4096
+// limit, without ever splitting a line (so <code> tags stay well-formed).
+async function sendChunked(chatId, lines) {
+  let buf = [];
+  let len = 0;
+  for (const ln of lines) {
+    if (buf.length && len + ln.length + 1 > 3900) {
+      await reply(chatId, buf.join('\n'));
+      buf = [];
+      len = 0;
+    }
+    buf.push(ln);
+    len += ln.length + 1;
+  }
+  if (buf.length) await reply(chatId, buf.join('\n'));
 }
 
 async function fetchJson(url, opts, timeoutMs) {
@@ -192,6 +215,12 @@ async function handleUpdate(update) {
         '/reset <i>email</i> — get the password reset link\n' +
         '/cookies <i>url</i> — fetch a URL and list its Set-Cookie headers\n' +
         '/nf <i>url|cookie</i> — extract cookies from a login URL (or paste a cookie) → account details\n' +
+        '\n<b>Batch + hold tracker</b>\n' +
+        '/scan <i>links…</i> — paste many login URLs; reads &amp; saves each account\n' +
+        '/hold — list saved on-hold accounts (with country)\n' +
+        '/update <i>id</i> — fresh no-password login URL for that account\n' +
+        '/done <i>id</i> — remove an account from the record once fixed\n' +
+        '/list — show everything saved · /clear yes — wipe the record\n\n' +
         '/id — show your Telegram ID\n' +
         '/ping — check the bot is alive');
       break;
@@ -375,6 +404,175 @@ async function handleUpdate(update) {
       } catch (e) {
         await reply(chatId, `⚠️ Lookup failed: <code>${esc(e.message || String(e))}</code>`);
       }
+      break;
+    }
+
+    case '/scan':
+    case '/batch':
+    case '/check': {
+      if (!isOwner) { await deny(chatId); break; }
+      const urls = arg.match(/https?:\/\/[^\s<>"']+/gi) || [];
+      const emails = arg.match(/[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+/gi) || [];
+      if (!urls.length) {
+        await reply(chatId,
+          'Paste one or more login URLs after /scan (emails optional). Example:\n' +
+          '<code>/scan\nuser1@mail.com https://link-1\nuser2@mail.com https://link-2</code>');
+        break;
+      }
+
+      await reply(chatId, `🔎 Scanning <b>${urls.length}</b> link${urls.length === 1 ? '' : 's'} one by one…`);
+
+      let loaded = 0, held = 0, failed = 0;
+      const rows = [];
+      for (let i = 0; i < urls.length; i++) {
+        const url = urls[i];
+        const tag = `${i + 1}/${urls.length}`;
+        try {
+          const resolved = await resolveCookiesFromUrl(url);
+          if (!resolved.netflixCookie) {
+            failed++;
+            rows.push(`❌ ${tag} no cookies — <code>${esc(shortUrl(url))}</code>`);
+            continue;
+          }
+          const info = await getNetflixInfo(resolved.netflixCookie);
+          if (!info.authenticated) {
+            failed++;
+            rows.push(`❌ ${tag} dead cookie (${esc(info.membershipStatus || 'ANONYMOUS')}) — <code>${esc(shortUrl(url))}</code>`);
+            continue;
+          }
+          const onHold = !!(info.hold && info.hold.isUserOnHold);
+          const rec = store.upsert({
+            email: info.email || emails[i] || null,
+            countryOfSignUp: info.countryOfSignUp || null,
+            currentCountry: info.currentCountry || null,
+            membershipStatus: info.membershipStatus || null,
+            onHold,
+            hold: info.hold || null,
+            plan: info.plan || null,
+            cookie: resolved.netflixCookie,
+            link: url,
+            userGuid: info.userGuid || null,
+            updatedAt: new Date().toISOString(),
+          });
+          loaded++;
+          if (onHold) held++;
+          rows.push(
+            `${onHold ? '⛔' : '✅'} ${tag} #${rec.id} <code>${esc(rec.email || '—')}</code> — ` +
+            `<b>${esc(rec.countryOfSignUp || '—')}</b> — ${esc(rec.membershipStatus || '—')}` +
+            (onHold ? ' — <b>ON HOLD</b>' : ''));
+        } catch (e) {
+          failed++;
+          rows.push(`⚠️ ${tag} error: <code>${esc((e.message || String(e)).slice(0, 100))}</code>`);
+        }
+      }
+
+      const lines = [
+        `📊 <b>Scan complete</b> — ${loaded} loaded, ${held} on hold, ${failed} failed.`,
+        '',
+        ...rows,
+      ];
+      await sendChunked(chatId, lines);
+      if (held) {
+        await reply(chatId, `Send <code>/hold</code> to see the ${held} on-hold account${held === 1 ? '' : 's'}.`);
+      }
+      break;
+    }
+
+    case '/hold':
+    case '/holds': {
+      if (!isOwner) { await deny(chatId); break; }
+      const list = store.holds();
+      if (!list.length) {
+        await reply(chatId, 'No on-hold accounts saved. Run <code>/scan</code> with some login URLs first.');
+        break;
+      }
+      const lines = [`⛔ <b>On-hold accounts (${list.length})</b>`, ''];
+      for (const a of list) {
+        lines.push(
+          `#${a.id} — <code>${esc(a.email || '—')}</code> — <b>${esc(a.countryOfSignUp || '—')}</b>` +
+          ` — ${esc((a.plan && a.plan.name) || a.membershipStatus || '—')}` +
+          (a.hold && a.hold.retryEligibility ? ` — retry: <code>${esc(a.hold.retryEligibility)}</code>` : ''));
+      }
+      lines.push('', 'Get a login URL with <code>/update &lt;id&gt;</code>, then <code>/done &lt;id&gt;</code> once fixed.');
+      await sendChunked(chatId, lines);
+      break;
+    }
+
+    case '/update':
+    case '/login':
+    case '/fix': {
+      if (!isOwner) { await deny(chatId); break; }
+      const id = (arg.split(/\s+/)[0] || '').replace(/^#/, '');
+      const a = store.get(id);
+      if (!a) {
+        await reply(chatId, `No saved account with id <code>${esc(id || '?')}</code>. Send <code>/hold</code> or <code>/list</code>.`);
+        break;
+      }
+      await reply(chatId, `🔑 Minting a fresh login URL for <code>${esc(a.email || ('#' + a.id))}</code>…`);
+      try {
+        const info = await getNetflixInfo(a.cookie);
+        if (!info.authenticated || !info.deepLink) {
+          await reply(chatId,
+            '⚠️ Couldn\u2019t make a login URL — the saved cookie may be dead now.\n' +
+            `Status: <code>${esc(info.httpStatus)}</code>, membership: <code>${esc(info.membershipStatus || 'ANONYMOUS')}</code>` +
+            (info.tokenError ? `\n${esc(info.tokenError)}` : ''));
+          break;
+        }
+        // refresh the saved status while we have a fresh read
+        store.patch(a.id, {
+          onHold: !!(info.hold && info.hold.isUserOnHold),
+          hold: info.hold || a.hold,
+          membershipStatus: info.membershipStatus || a.membershipStatus,
+          countryOfSignUp: info.countryOfSignUp || a.countryOfSignUp,
+          updatedAt: new Date().toISOString(),
+        });
+        await reply(chatId,
+          `🔑 <b>Login URL for ${esc(a.email || ('#' + a.id))}</b> (${esc(a.countryOfSignUp || '—')}):\n` +
+          `<code>${esc(info.deepLink)}</code>\n\n` +
+          `Open it, clear the hold, then send <code>/done ${a.id}</code> to remove it from the record.`);
+      } catch (e) {
+        await reply(chatId, `⚠️ Failed: <code>${esc(e.message || String(e))}</code>`);
+      }
+      break;
+    }
+
+    case '/done':
+    case '/remove':
+    case '/resolved': {
+      if (!isOwner) { await deny(chatId); break; }
+      const id = (arg.split(/\s+/)[0] || '').replace(/^#/, '');
+      const a = store.get(id);
+      if (!a) {
+        await reply(chatId, `No saved account with id <code>${esc(id || '?')}</code>.`);
+        break;
+      }
+      store.remove(id);
+      await reply(chatId, `✅ Removed <code>${esc(a.email || ('#' + a.id))}</code> (${esc(a.countryOfSignUp || '—')}) from the record.`);
+      break;
+    }
+
+    case '/list': {
+      if (!isOwner) { await deny(chatId); break; }
+      const list = store.all();
+      if (!list.length) { await reply(chatId, 'The record is empty. Run <code>/scan</code> first.'); break; }
+      const lines = [`📒 <b>Saved accounts (${list.length})</b>`, ''];
+      for (const a of list) {
+        lines.push(
+          `${a.onHold ? '⛔' : '✅'} #${a.id} — <code>${esc(a.email || '—')}</code> — ` +
+          `<b>${esc(a.countryOfSignUp || '—')}</b> — ${esc(a.membershipStatus || '—')}`);
+      }
+      await sendChunked(chatId, lines);
+      break;
+    }
+
+    case '/clear': {
+      if (!isOwner) { await deny(chatId); break; }
+      if ((arg.split(/\s+/)[0] || '').toLowerCase() !== 'yes') {
+        await reply(chatId, `This wipes all ${store.all().length} saved account(s). Send <code>/clear yes</code> to confirm.`);
+        break;
+      }
+      store.clear();
+      await reply(chatId, '🗑️ Record cleared.');
       break;
     }
 

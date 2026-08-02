@@ -47,6 +47,18 @@ Then add the same variables in the Railway dashboard.
      country of signup, membership status, **on-hold**, plan, member-since, email, plus a
      no-password login URL (`nftoken` deep link). You can also paste a cookie directly:
      `/nf NetflixId=…; SecureNetflixId=…;`
+   - `/scan <links…>` — paste many login URLs at once (emails optional); the bot processes
+     them one by one, reads each account, and saves the results. Reports how many loaded and
+     how many are on hold.
+   - `/hold` — list the saved **on-hold** accounts with their country and plan.
+   - `/update <id>` — mint a fresh no-password login URL for that account (from its saved
+     cookie) so you can open it and clear the hold.
+   - `/done <id>` — remove an account from the record after you've fixed it.
+   - `/list` — show every saved account · `/clear yes` — wipe the record.
+
+   The scanned record is stored in `records.json` next to the bot. Set `DATA_DIR` to a
+   Railway **Volume** mount path if you want it to survive restarts and redeploys; otherwise
+   it resets when the service restarts.
    - `/ping` — check it's alive
    - `/help` — command list
 
