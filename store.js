@@ -10,7 +10,10 @@
  *
  * Record shape (per account):
  *   { id, email, countryOfSignUp, currentCountry, membershipStatus,
- *     onHold, hold, plan, cookie, link, userGuid, updatedAt }
+ *     onHold, hold, plan, cookie, link, userGuid, status, updatedAt, fixedAt }
+ *
+ * status:  'hold'  — detected on hold by /scan, shown by /hold
+ *          'fixed' — verified cleared by /done, shown by /list
  */
 
 const fs = require('fs');
@@ -69,7 +72,11 @@ function patch(id, fields) {
 }
 
 function all()   { return Object.values(state.accounts); }
-function holds() { return all().filter(a => a.onHold); }
+// On-hold bucket (shown by /hold): status 'hold', or a legacy record with no
+// status that is still flagged onHold.
+function holds() { return all().filter(a => a.status === 'hold' || (a.status == null && a.onHold)); }
+// Fixed bucket (shown by /list): only accounts verified cleared by /done.
+function fixed() { return all().filter(a => a.status === 'fixed'); }
 function get(id) { return state.accounts[String(id)] || null; }
 
 function remove(id) {
@@ -85,4 +92,4 @@ function clear() {
   save();
 }
 
-module.exports = { upsert, patch, all, holds, get, remove, clear, FILE, DATA_DIR };
+module.exports = { upsert, patch, all, holds, fixed, get, remove, clear, FILE, DATA_DIR };

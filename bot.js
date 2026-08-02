@@ -216,11 +216,12 @@ async function handleUpdate(update) {
         '/cookies <i>url</i> — fetch a URL and list its Set-Cookie headers\n' +
         '/nf <i>url|cookie</i> — extract cookies from a login URL (or paste a cookie) → account details\n' +
         '\n<b>Batch + hold tracker</b>\n' +
-        '/scan <i>links…</i> — paste many login URLs; reads &amp; saves each account\n' +
-        '/hold — list saved on-hold accounts (with country)\n' +
-        '/update <i>id</i> — fresh no-password login URL for that account\n' +
-        '/done <i>id</i> — remove an account from the record once fixed\n' +
-        '/list — show everything saved · /clear yes — wipe the record\n\n' +
+        '/scan <i>links…</i> — paste many login URLs; saves only the ON-HOLD ones\n' +
+        '/hold — list on-hold accounts still to fix (with country)\n' +
+        '/update <i>id</i> — fresh no-password login URL to clear that hold\n' +
+        '/done <i>id</i> — re-check; if the hold is cleared it moves to /list, else says not fixed\n' +
+        '/list — accounts you have fixed (verified by /done)\n' +
+        '/remove <i>id</i> — force-delete an entry · /clear yes — wipe the record\n\n' +
         '/id — show your Telegram ID\n' +
         '/ping — check the bot is alive');
       break;
@@ -422,7 +423,7 @@ async function handleUpdate(update) {
 
       await reply(chatId, `🔎 Scanning <b>${urls.length}</b> link${urls.length === 1 ? '' : 's'} one by one…`);
 
-      let loaded = 0, held = 0, failed = 0;
+      let ok = 0, held = 0, failed = 0;
       const rows = [];
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i];
@@ -441,25 +442,36 @@ async function handleUpdate(update) {
             continue;
           }
           const onHold = !!(info.hold && info.hold.isUserOnHold);
-          const rec = store.upsert({
-            email: info.email || emails[i] || null,
-            countryOfSignUp: info.countryOfSignUp || null,
-            currentCountry: info.currentCountry || null,
-            membershipStatus: info.membershipStatus || null,
-            onHold,
-            hold: info.hold || null,
-            plan: info.plan || null,
-            cookie: resolved.netflixCookie,
-            link: url,
-            userGuid: info.userGuid || null,
-            updatedAt: new Date().toISOString(),
-          });
-          loaded++;
-          if (onHold) held++;
-          rows.push(
-            `${onHold ? '⛔' : '✅'} ${tag} #${rec.id} <code>${esc(rec.email || '—')}</code> — ` +
-            `<b>${esc(rec.countryOfSignUp || '—')}</b> — ${esc(rec.membershipStatus || '—')}` +
-            (onHold ? ' — <b>ON HOLD</b>' : ''));
+          const email = info.email || emails[i] || '—';
+          const country = info.countryOfSignUp || '—';
+          const membership = info.membershipStatus || '—';
+          if (onHold) {
+            // Only on-hold accounts are tracked — they go into the /hold list.
+            const rec = store.upsert({
+              email: info.email || emails[i] || null,
+              countryOfSignUp: info.countryOfSignUp || null,
+              currentCountry: info.currentCountry || null,
+              membershipStatus: info.membershipStatus || null,
+              onHold: true,
+              hold: info.hold || null,
+              plan: info.plan || null,
+              cookie: resolved.netflixCookie,
+              link: url,
+              userGuid: info.userGuid || null,
+              status: 'hold',
+              updatedAt: new Date().toISOString(),
+            });
+            held++;
+            rows.push(
+              `⛔ ${tag} #${rec.id} <code>${esc(email)}</code> — ` +
+              `<b>${esc(country)}</b> — ${esc(membership)} — <b>ON HOLD</b>`);
+          } else {
+            // Not on hold → nothing to fix, so we don't save it.
+            ok++;
+            rows.push(
+              `✅ ${tag} <code>${esc(email)}</code> — ` +
+              `<b>${esc(country)}</b> — ${esc(membership)} — not on hold (not saved)`);
+          }
         } catch (e) {
           failed++;
           rows.push(`⚠️ ${tag} error: <code>${esc((e.message || String(e)).slice(0, 100))}</code>`);
@@ -467,7 +479,7 @@ async function handleUpdate(update) {
       }
 
       const lines = [
-        `📊 <b>Scan complete</b> — ${loaded} loaded, ${held} on hold, ${failed} failed.`,
+        `📊 <b>Scan complete</b> — ${held} on hold (saved), ${ok} ok (not saved), ${failed} failed.`,
         '',
         ...rows,
       ];
@@ -518,9 +530,11 @@ async function handleUpdate(update) {
             (info.tokenError ? `\n${esc(info.tokenError)}` : ''));
           break;
         }
-        // refresh the saved status while we have a fresh read
+        // refresh the saved details while we have a fresh read (status stays
+        // 'hold' — only /done can move an account to the fixed /list)
+        const freshOnHold = !!(info.hold && info.hold.isUserOnHold);
         store.patch(a.id, {
-          onHold: !!(info.hold && info.hold.isUserOnHold),
+          onHold: freshOnHold,
           hold: info.hold || a.hold,
           membershipStatus: info.membershipStatus || a.membershipStatus,
           countryOfSignUp: info.countryOfSignUp || a.countryOfSignUp,
@@ -529,7 +543,9 @@ async function handleUpdate(update) {
         await reply(chatId,
           `🔑 <b>Login URL for ${esc(a.email || ('#' + a.id))}</b> (${esc(a.countryOfSignUp || '—')}):\n` +
           `<code>${esc(info.deepLink)}</code>\n\n` +
-          `Open it, clear the hold, then send <code>/done ${a.id}</code> to remove it from the record.`);
+          (freshOnHold
+            ? `Open it, clear the hold, then send <code>/done ${a.id}</code> — I\u2019ll re-check and move it to <code>/list</code> once it\u2019s fixed.`
+            : `ℹ️ This account already reads as <b>not on hold</b>. Send <code>/done ${a.id}</code> to verify and move it to <code>/list</code>.`));
       } catch (e) {
         await reply(chatId, `⚠️ Failed: <code>${esc(e.message || String(e))}</code>`);
       }
@@ -537,8 +553,68 @@ async function handleUpdate(update) {
     }
 
     case '/done':
-    case '/remove':
     case '/resolved': {
+      if (!isOwner) { await deny(chatId); break; }
+      const id = (arg.split(/\s+/)[0] || '').replace(/^#/, '');
+      const a = store.get(id);
+      if (!a) {
+        await reply(chatId, `No saved account with id <code>${esc(id || '?')}</code>. Send <code>/hold</code>.`);
+        break;
+      }
+      if (a.status === 'fixed') {
+        await reply(chatId, `#${esc(a.id)} is already marked fixed — see <code>/list</code>.`);
+        break;
+      }
+      await reply(chatId, `🔁 Re-checking <code>${esc(a.email || ('#' + a.id))}</code> before removing…`);
+      let info;
+      try {
+        info = await getNetflixInfo(a.cookie);
+      } catch (e) {
+        await reply(chatId, `⚠️ Re-check failed: <code>${esc(e.message || String(e))}</code>. Try again in a moment.`);
+        break;
+      }
+      if (!info.authenticated) {
+        await reply(chatId,
+          `⚠️ Couldn\u2019t verify #${esc(a.id)} — its saved session is dead now.\n` +
+          `Re-run <code>/scan</code> with a fresh login link for <code>${esc(a.email || '—')}</code>, ` +
+          `clear the hold, then <code>/done ${esc(a.id)}</code> again.\n` +
+          `(To just delete this entry, use <code>/remove ${esc(a.id)}</code>.)`);
+        break;
+      }
+      const stillOnHold = !!(info.hold && info.hold.isUserOnHold);
+      if (stillOnHold) {
+        // Not fixed — keep it in the hold list, refresh the details.
+        store.patch(a.id, {
+          onHold: true,
+          hold: info.hold || a.hold,
+          membershipStatus: info.membershipStatus || a.membershipStatus,
+          countryOfSignUp: info.countryOfSignUp || a.countryOfSignUp,
+          status: 'hold',
+          updatedAt: new Date().toISOString(),
+        });
+        await reply(chatId,
+          `❌ <b>Not fixed.</b> #${esc(a.id)} <code>${esc(a.email || '—')}</code> is still on hold.\n` +
+          `Open <code>/update ${esc(a.id)}</code>, clear the hold, then send <code>/done ${esc(a.id)}</code> again.`);
+        break;
+      }
+      // Verified no longer on hold → move it to the fixed /list.
+      store.patch(a.id, {
+        onHold: false,
+        hold: info.hold || null,
+        membershipStatus: info.membershipStatus || a.membershipStatus,
+        countryOfSignUp: info.countryOfSignUp || a.countryOfSignUp,
+        status: 'fixed',
+        fixedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      await reply(chatId,
+        `✅ <b>Fixed!</b> #${esc(a.id)} <code>${esc(a.email || '—')}</code> ` +
+        `(${esc(info.countryOfSignUp || a.countryOfSignUp || '—')}) is no longer on hold — moved to <code>/list</code>.`);
+      break;
+    }
+
+    case '/remove':
+    case '/drop': {
       if (!isOwner) { await deny(chatId); break; }
       const id = (arg.split(/\s+/)[0] || '').replace(/^#/, '');
       const a = store.get(id);
@@ -547,19 +623,25 @@ async function handleUpdate(update) {
         break;
       }
       store.remove(id);
-      await reply(chatId, `✅ Removed <code>${esc(a.email || ('#' + a.id))}</code> (${esc(a.countryOfSignUp || '—')}) from the record.`);
+      await reply(chatId, `🗑️ Force-removed <code>${esc(a.email || ('#' + a.id))}</code> (${esc(a.countryOfSignUp || '—')}) from the record.`);
       break;
     }
 
     case '/list': {
       if (!isOwner) { await deny(chatId); break; }
-      const list = store.all();
-      if (!list.length) { await reply(chatId, 'The record is empty. Run <code>/scan</code> first.'); break; }
-      const lines = [`📒 <b>Saved accounts (${list.length})</b>`, ''];
+      const list = store.fixed();
+      if (!list.length) {
+        await reply(chatId,
+          'No fixed accounts yet. Clear a hold with <code>/update &lt;id&gt;</code>, ' +
+          'then confirm with <code>/done &lt;id&gt;</code> to move it here.');
+        break;
+      }
+      const lines = [`📒 <b>Fixed accounts (${list.length})</b>`, ''];
       for (const a of list) {
+        const when = a.fixedAt ? ` — <i>${esc(String(a.fixedAt).slice(0, 10))}</i>` : '';
         lines.push(
-          `${a.onHold ? '⛔' : '✅'} #${a.id} — <code>${esc(a.email || '—')}</code> — ` +
-          `<b>${esc(a.countryOfSignUp || '—')}</b> — ${esc(a.membershipStatus || '—')}`);
+          `✅ #${esc(a.id)} — <code>${esc(a.email || '—')}</code> — ` +
+          `<b>${esc(a.countryOfSignUp || '—')}</b> — ${esc(a.membershipStatus || '—')}${when}`);
       }
       await sendChunked(chatId, lines);
       break;
