@@ -133,6 +133,31 @@ async function fetchFromTool(email, action) {
   }
 }
 
+// ─── URL cookie inspector (for /cookies) ───────────────────────────────────────
+// Hits a URL WITHOUT following redirects and returns the status code, any
+// Location header, and the raw Set-Cookie headers exactly as the server sent
+// them. Node's built-in fetch returns the REAL 3xx response for
+// redirect:'manual' (verified), so getSetCookie() also sees cookies set on a
+// 302 — no need for the `undici` package, the global fetch already does this.
+async function fetchCookies(url, timeoutMs = 30000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      redirect: 'manual',              // don't auto-follow: show the FIRST response's cookies
+      headers: { 'User-Agent': BROWSER_UA },
+      signal: ctrl.signal,
+    });
+    const cookies = typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')] : []);
+    return { status: res.status, location: res.headers.get('location'), cookies };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // ─── Command handling ──────────────────────────────────────────────────────────
 async function handleUpdate(update) {
   const msg = update.message || update.edited_message;
@@ -164,6 +189,7 @@ async function handleUpdate(update) {
         '<b>Netflix Tools Bot</b>\n\n' +
         '/code <i>email</i> — get the Netflix verification code\n' +
         '/reset <i>email</i> — get the password reset link\n' +
+        '/cookies <i>url</i> — fetch a URL and list its Set-Cookie headers\n' +
         '/id — show your Telegram ID\n' +
         '/ping — check the bot is alive');
       break;
@@ -194,6 +220,50 @@ async function handleUpdate(update) {
       } else {
         await reply(chatId,
           `✅ ${label} for <code>${esc(arg)}</code>:\n<b>${esc(value)}</b>`);
+      }
+      break;
+    }
+
+    case '/cookie':
+    case '/cookies': {
+      if (!isOwner) { await deny(chatId); break; }
+
+      let target = null;
+      const rawUrl = (arg.split(/\s+/)[0] || '').trim();
+      try { target = new URL(rawUrl); } catch (_) { /* invalid URL */ }
+      if (!target || (target.protocol !== 'http:' && target.protocol !== 'https:')) {
+        await reply(chatId, 'Usage: <code>/cookies https://example.com</code>');
+        break;
+      }
+
+      await reply(chatId, `🍪 Fetching cookies from <code>${esc(target.href)}</code>…`);
+
+      try {
+        const { status, location, cookies } = await fetchCookies(target.href);
+
+        const lines = [
+          `🍪 <b>${esc(target.href)}</b>`,
+          `Status: <code>${status}</code>`,
+        ];
+        if (location) lines.push(`Location: <code>${esc(location)}</code>`);
+
+        if (!cookies.length) {
+          lines.push('', 'No <code>Set-Cookie</code> headers returned.');
+        } else {
+          lines.push('', `<b>Set-Cookie (${cookies.length}):</b>`);
+          for (const c of cookies) {
+            const raw = c.length > 400 ? c.slice(0, 400) + '…' : c;
+            lines.push(`<code>${esc(raw)}</code>`);
+          }
+        }
+
+        // Stay under Telegram's 4096-char limit by dropping WHOLE lines, so we
+        // never split an <code> tag (malformed HTML makes Telegram reject it).
+        while (lines.length > 3 && lines.join('\n').length > 3900) lines.pop();
+
+        await reply(chatId, lines.join('\n'));
+      } catch (e) {
+        await reply(chatId, `⚠️ Couldn't fetch that URL: <code>${esc(e.message || String(e))}</code>`);
       }
       break;
     }
