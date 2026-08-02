@@ -12,7 +12,7 @@ It uses **long-polling**, not a webhook, so it never touches your site's firewal
 ## Deploy on Railway
 
 ### Option A — from GitHub (recommended)
-1. Put these files (`bot.js`, `package.json`, `.gitignore`, `README.md`) in a GitHub repo.
+1. Put these files (`bot.js`, `nf-account.js`, `package.json`, `.gitignore`, `README.md`) in a GitHub repo.
 2. Go to **railway.app → New Project → Deploy from GitHub repo** → pick the repo.
 3. Open the service → **Variables** tab → add:
    | Variable | Value |
@@ -41,6 +41,10 @@ Then add the same variables in the Railway dashboard.
 3. Now use it:
    - `/code someone@email.com` — Netflix verification code
    - `/reset someone@email.com` — password-reset link
+   - `/cookies https://example.com` — fetch a URL and list its `Set-Cookie` headers
+   - `/nf NetflixId=…; SecureNetflixId=…;` — full Netflix account details from a session
+     cookie: country of signup, membership status, **on-hold**, plan, member-since, email,
+     plus a no-password login URL (`nftoken` deep link)
    - `/ping` — check it's alive
    - `/help` — command list
 

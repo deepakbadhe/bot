@@ -30,6 +30,7 @@
  */
 
 const http = require('http');
+const { getNetflixInfo } = require('./nf-account');
 
 // ─── CONFIG (from environment) ────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -190,6 +191,7 @@ async function handleUpdate(update) {
         '/code <i>email</i> — get the Netflix verification code\n' +
         '/reset <i>email</i> — get the password reset link\n' +
         '/cookies <i>url</i> — fetch a URL and list its Set-Cookie headers\n' +
+        '/nf <i>cookie</i> — Netflix account details from a session cookie\n' +
         '/id — show your Telegram ID\n' +
         '/ping — check the bot is alive');
       break;
@@ -264,6 +266,75 @@ async function handleUpdate(update) {
         await reply(chatId, lines.join('\n'));
       } catch (e) {
         await reply(chatId, `⚠️ Couldn't fetch that URL: <code>${esc(e.message || String(e))}</code>`);
+      }
+      break;
+    }
+
+    case '/nf':
+    case '/netflix': {
+      if (!isOwner) { await deny(chatId); break; }
+      if (!arg || !/NetflixId=/.test(arg)) {
+        await reply(chatId,
+          'Usage: <code>/nf NetflixId=…; SecureNetflixId=…;</code>\n' +
+          'Paste the account\u2019s Netflix session cookie (must include NetflixId).');
+        break;
+      }
+
+      await reply(chatId, '🔍 Reading Netflix account…');
+
+      try {
+        const info = await getNetflixInfo(arg);
+
+        if (!info.authenticated) {
+          await reply(chatId,
+            '❌ <b>Cookie is dead / not logged in.</b>\n' +
+            `Status: <code>${esc(info.httpStatus)}</code>\n` +
+            `Membership: <code>${esc(info.membershipStatus || 'ANONYMOUS')}</code>\n` +
+            esc(info.reason || ''));
+          break;
+        }
+
+        const yn = v => v === true ? '⛔ YES' : v === false ? '✅ No' : '❓ unknown';
+        const or = (v, d = '—') => (v == null || v === '') ? d : v;
+        const onHold = info.hold && info.hold.isUserOnHold;
+
+        const lines = [
+          '🎬 <b>Netflix account</b>',
+          `📧 Email: <code>${esc(or(info.email))}</code>`,
+          `🌍 Country of signup: <b>${esc(or(info.countryOfSignUp))}</b>`,
+          `📍 Current country: <code>${esc(or(info.currentCountry))}</code>`,
+          `🎫 Membership: <b>${esc(or(info.membershipStatus))}</b>`,
+          `📅 Member since: <code>${esc(or(info.memberSince))}</code>`,
+          `⏸️ On hold: <b>${yn(onHold)}</b>`,
+        ];
+        if (onHold) {
+          lines.push(
+            `   ↳ retry: <code>${esc(or(info.hold.retryEligibility))}</code>, ` +
+            `reason: <code>${esc(or(info.hold.serviceEndReason))}</code>`);
+        }
+        lines.push(`💳 Plan: <b>${esc(or(info.plan && info.plan.name))}</b>`);
+        if (info.plan && info.plan.nextBillingDate) {
+          lines.push(`   ↳ next billing: <code>${esc(info.plan.nextBillingDate)}</code>`);
+        }
+        lines.push(`🆔 GUID: <code>${esc(or(info.userGuid))}</code>`);
+
+        if (info.deepLink) {
+          lines.push('', '🔑 <b>Login URL (no password):</b>', `<code>${esc(info.deepLink)}</code>`);
+        }
+        if (info.token) {
+          const exp = info.tokenExpiresISO ? ` (expires ${info.tokenExpiresISO})` : '';
+          lines.push('', `🎟️ <b>nftoken${esc(exp)}:</b>`, `<code>${esc(info.token)}</code>`);
+        } else if (info.tokenError) {
+          lines.push('', `🎟️ nftoken: <i>${esc(info.tokenError)}</i>`);
+        }
+
+        // Stay under Telegram's 4096-char limit by dropping WHOLE trailing lines,
+        // so we never split a <code> tag (malformed HTML makes Telegram reject it).
+        while (lines.length > 8 && lines.join('\n').length > 3900) lines.pop();
+
+        await reply(chatId, lines.join('\n'));
+      } catch (e) {
+        await reply(chatId, `⚠️ Lookup failed: <code>${esc(e.message || String(e))}</code>`);
       }
       break;
     }
