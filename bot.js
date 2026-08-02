@@ -16,6 +16,7 @@
  *   BOT_TOKEN         (required)  your @BotFather token
  *   ALLOWED_CHAT_IDS  (required)  your numeric Telegram ID(s), comma-separated
  *   TOOL_URL          (optional)  defaults to https://cigaop.club/verificationcode/
+ *   NOTIFY_CHAT_ID    (optional)  chat id pinged when a hold is fixed via /done
  *
  * FIRST RUN:
  *   1) Deploy with BOT_TOKEN set.
@@ -37,6 +38,16 @@ const store = require('./store');
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const TOOL_URL  = process.env.TOOL_URL  || 'https://cigaop.club/verificationcode/';
 const ALLOWED_CHAT_IDS = (process.env.ALLOWED_CHAT_IDS || '')
+  .split(/[\s,]+/)
+  .map(s => s.trim())
+  .filter(Boolean)
+  .map(Number)
+  .filter(Number.isFinite);
+
+// Chat id(s) that get a message every time a hold is verified fixed by /done.
+// Defaults to the id below; override with NOTIFY_CHAT_ID (or NOTIFY_CHAT_IDS,
+// comma-separated) via a Railway variable — no code change needed.
+const NOTIFY_CHAT_IDS = (process.env.NOTIFY_CHAT_IDS || process.env.NOTIFY_CHAT_ID || '858170312')
   .split(/[\s,]+/)
   .map(s => s.trim())
   .filter(Boolean)
@@ -623,6 +634,21 @@ async function handleUpdate(update) {
       await reply(chatId,
         `✅ <b>Fixed!</b> #${esc(a.id)} <code>${esc(a.email || '—')}</code> ` +
         `(${esc(info.countryOfSignUp || a.countryOfSignUp || '—')}) is no longer on hold — moved to <code>/list</code>.`);
+
+      // Ping the configured watcher chat(s) that this hold is now fixed.
+      const fixedEmail = a.email || info.email || ('#' + a.id);
+      const fixedCountry = info.countryOfSignUp || a.countryOfSignUp || '—';
+      const notice = `✅ <b>Hold fixed:</b> <code>${esc(fixedEmail)}</code> (${esc(fixedCountry)}) is no longer on hold.`;
+      const notifyFailed = [];
+      for (const nid of NOTIFY_CHAT_IDS) {
+        if (nid === chatId) continue; // the operator already got the reply above
+        const nr = await reply(nid, notice);
+        if (!nr || nr.ok !== true) { notifyFailed.push(nid); console.error('notify ' + nid + ' failed:', JSON.stringify(nr)); }
+      }
+      if (notifyFailed.length) {
+        await reply(chatId,
+          `⚠️ Couldn\u2019t notify <code>${esc(notifyFailed.join(', '))}</code> — that chat must message this bot once (send it any text), then fix-notifications will go through.`);
+      }
       break;
     }
 
