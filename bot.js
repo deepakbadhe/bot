@@ -211,11 +211,7 @@ async function handleUpdate(update) {
       }
       await reply(chatId,
         '<b>Netflix Tools Bot</b>\n\n' +
-        '/code <i>email</i> — get the Netflix verification code\n' +
-        '/reset <i>email</i> — get the password reset link\n' +
-        '/cookies <i>url</i> — fetch a URL and list its Set-Cookie headers\n' +
-        '/nf <i>url|cookie</i> — extract cookies from a login URL (or paste a cookie) → account details\n' +
-        '\n<b>Batch + hold tracker</b>\n' +
+        '<b>Batch + hold tracker</b>\n' +
         '/scan <i>links…</i> — paste many login URLs; saves only the ON-HOLD ones\n' +
         '/hold — list on-hold accounts still to fix (with country)\n' +
         '/update <i>id</i> — fresh no-password login URL to clear that hold\n' +
@@ -498,12 +494,30 @@ async function handleUpdate(update) {
         await reply(chatId, 'No on-hold accounts saved. Run <code>/scan</code> with some login URLs first.');
         break;
       }
-      const lines = [`⛔ <b>On-hold accounts (${list.length})</b>`, ''];
+      // Group by country so every account from the same country is listed
+      // together (all US, then UK, then ID …) instead of interleaved in scan
+      // order. Countries are alphabetical (unknown last); ids ascending within.
+      const countryOf = a => (a.countryOfSignUp && String(a.countryOfSignUp).trim())
+        ? String(a.countryOfSignUp).trim().toUpperCase() : '—';
+      const numId = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+      const groups = new Map();
       for (const a of list) {
-        lines.push(
-          `#${a.id} — <code>${esc(a.email || '—')}</code> — <b>${esc(a.countryOfSignUp || '—')}</b>` +
-          ` — ${esc((a.plan && a.plan.name) || a.membershipStatus || '—')}` +
-          (a.hold && a.hold.retryEligibility ? ` — retry: <code>${esc(a.hold.retryEligibility)}</code>` : ''));
+        const key = countryOf(a);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(a);
+      }
+      const keys = [...groups.keys()].sort((x, y) =>
+        x === '—' ? 1 : y === '—' ? -1 : x.localeCompare(y));
+      const lines = [`⛔ <b>On-hold accounts (${list.length})</b>`];
+      for (const key of keys) {
+        const rows = groups.get(key).sort((p, q) => numId(p.id) - numId(q.id));
+        lines.push('', `<b>${esc(key)}</b> (${rows.length})`);
+        for (const a of rows) {
+          lines.push(
+            `#${a.id} — <code>${esc(a.email || '—')}</code>` +
+            ` — ${esc((a.plan && a.plan.name) || a.membershipStatus || '—')}` +
+            (a.hold && a.hold.retryEligibility ? ` — retry: <code>${esc(a.hold.retryEligibility)}</code>` : ''));
+        }
       }
       lines.push('', 'Get a login URL with <code>/update &lt;id&gt;</code>, then <code>/done &lt;id&gt;</code> once fixed.');
       await sendChunked(chatId, lines);
