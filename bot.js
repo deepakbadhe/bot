@@ -212,14 +212,12 @@ async function handleUpdate(update) {
       await reply(chatId,
         '<b>Netflix Tools Bot</b>\n\n' +
         '<b>Batch + hold tracker</b>\n' +
-        '/scan <i>links…</i> — paste many login URLs; saves only the ON-HOLD ones\n' +
         '/hold — list on-hold accounts still to fix (with country)\n' +
-        '/update <i>id</i> — fresh no-password login URL to clear that hold\n' +
+        '/get <i>id</i> — fresh no-password login URL to clear that hold\n' +
         '/done <i>id</i> — re-check; if the hold is cleared it moves to /list, else says not fixed\n' +
         '/list — accounts you have fixed (verified by /done)\n' +
         '/remove <i>id</i> — force-delete an entry\n\n' +
-        '/id — show your Telegram ID\n' +
-        '/ping — check the bot is alive');
+        '/id — show your Telegram ID');
       break;
 
     case '/ping':
@@ -519,11 +517,12 @@ async function handleUpdate(update) {
             (a.hold && a.hold.retryEligibility ? ` — retry: <code>${esc(a.hold.retryEligibility)}</code>` : ''));
         }
       }
-      lines.push('', 'Get a login URL with <code>/update &lt;id&gt;</code>, then <code>/done &lt;id&gt;</code> once fixed.');
+      lines.push('', 'Get a login URL with <code>/get &lt;id&gt;</code>, then <code>/done &lt;id&gt;</code> once fixed.');
       await sendChunked(chatId, lines);
       break;
     }
 
+    case '/get':
     case '/update':
     case '/login':
     case '/fix': {
@@ -608,7 +607,7 @@ async function handleUpdate(update) {
         });
         await reply(chatId,
           `❌ <b>Not fixed.</b> #${esc(a.id)} <code>${esc(a.email || '—')}</code> is still on hold.\n` +
-          `Open <code>/update ${esc(a.id)}</code>, clear the hold, then send <code>/done ${esc(a.id)}</code> again.`);
+          `Open <code>/get ${esc(a.id)}</code>, clear the hold, then send <code>/done ${esc(a.id)}</code> again.`);
         break;
       }
       // Verified no longer on hold → move it to the fixed /list.
@@ -646,7 +645,7 @@ async function handleUpdate(update) {
       const list = store.fixed();
       if (!list.length) {
         await reply(chatId,
-          'No fixed accounts yet. Clear a hold with <code>/update &lt;id&gt;</code>, ' +
+          'No fixed accounts yet. Clear a hold with <code>/get &lt;id&gt;</code>, ' +
           'then confirm with <code>/done &lt;id&gt;</code> to move it here.');
         break;
       }

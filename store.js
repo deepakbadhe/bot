@@ -5,8 +5,9 @@
  * Persists to records.json so /hold, /update and /done survive across commands.
  *
  * DURABILITY: by default the file lives next to the bot, which on Railway means
- * it resets on every restart/redeploy. Point DATA_DIR at a Railway Volume mount
- * to make the record permanent — no code change needed.
+ * it resets on every restart/redeploy. Attach a Railway Volume and it's used
+ * automatically (via RAILWAY_VOLUME_MOUNT_PATH); or set DATA_DIR to choose the
+ * location. The record then survives restarts, redeploys and env changes.
  *
  * Record shape (per account):
  *   { id, email, countryOfSignUp, currentCountry, membershipStatus,
@@ -19,7 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DATA_DIR = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
 const FILE = path.join(DATA_DIR, 'records.json');
 
 let state = { nextId: 1, accounts: {} };
