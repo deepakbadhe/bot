@@ -217,7 +217,7 @@ async function handleUpdate(update) {
         '/update <i>id</i> — fresh no-password login URL to clear that hold\n' +
         '/done <i>id</i> — re-check; if the hold is cleared it moves to /list, else says not fixed\n' +
         '/list — accounts you have fixed (verified by /done)\n' +
-        '/remove <i>id</i> — force-delete an entry · /clear yes — wipe the record\n\n' +
+        '/remove <i>id</i> — force-delete an entry\n\n' +
         '/id — show your Telegram ID\n' +
         '/ping — check the bot is alive');
       break;
