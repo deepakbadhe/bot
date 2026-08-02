@@ -7,7 +7,7 @@
  * string your panel stores per account) and it returns, in one call:
  *
  *   • token / tokenExpires  — the nftoken minted by Netflix's iOS FTL API
- *                             (same value the PHP used for the /unsupported deep link)
+ *                             (same value the PHP used for the /account deep link)
  *   • email, userGuid
  *   • countryOfSignUp, currentCountry
  *   • membershipStatus      — CURRENT_MEMBER | FORMER_MEMBER | NEVER_MEMBER | ANONYMOUS
@@ -243,7 +243,7 @@ async function getNetflixInfo(cookie) {
     tokenExpires,
     tokenExpiresISO: tokenExpires ? new Date(tokenExpires * 1000).toISOString() : null,
     ...(tokenError ? { tokenError } : {}),
-    deepLink: token ? 'https://www.netflix.com/unsupported?nftoken=' + encodeURIComponent(token) : null,
+    deepLink: token ? 'https://www.netflix.com/account?nftoken=' + encodeURIComponent(token) : null,
   };
 }
 
