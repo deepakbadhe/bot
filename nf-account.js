@@ -247,16 +247,109 @@ async function getNetflixInfo(cookie) {
   };
 }
 
-module.exports = { getNetflixInfo, getAccountInfo, getNftoken, extractNetflixId };
+// ─── resolve cookies from a (possibly redirecting) login URL ────────────────
+// Fetch startUrl and follow redirects MANUALLY with a cookie jar, so cookies
+// set on ANY hop (302 login chains included) are captured. Node's global fetch
+// with redirect:'follow' hides intermediate Set-Cookie headers, so we walk the
+// chain by hand and forward accumulated cookies on each hop, like a browser.
+// Returns the Netflix session cookie (NetflixId + SecureNetflixId) when the
+// flow produced one, plus the full jar and redirect chain for debugging.
+function parseSetCookie(sc) {
+  const m = String(sc).match(/^\s*([^=;\s]+)=([^;]*)/);
+  return m ? { name: m[1], value: m[2] } : null;
+}
+function cookieHeaderFrom(jar) {
+  return Object.keys(jar).map(k => k + '=' + jar[k]).join('; ');
+}
+async function resolveCookiesFromUrl(startUrl, opts = {}) {
+  const maxRedirects = opts.maxRedirects != null ? opts.maxRedirects : 10;
+  const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : REQUEST_TIMEOUT;
+  const jar = {};
+  const chain = [];
+  let url = startUrl;
+
+  for (let i = 0; i <= maxRedirects; i++) {
+    const to = withTimeout(timeoutMs);
+    let res;
+    try {
+      const cookie = cookieHeaderFrom(jar);
+      res = await fetch(url, {
+        method: 'GET',
+        redirect: 'manual',
+        headers: {
+          'User-Agent': BROWSER_UA,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          ...(cookie ? { Cookie: cookie } : {}),
+        },
+        signal: to.signal,
+      });
+    } finally { to.done(); }
+
+    const setCookies = typeof res.headers.getSetCookie === 'function'
+      ? res.headers.getSetCookie()
+      : (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')] : []);
+    for (const sc of setCookies) {
+      const c = parseSetCookie(sc);
+      // keep only real values — skip cookie deletions (empty / "deleted")
+      if (c && c.value && c.value !== '""' && c.value.toLowerCase() !== 'deleted') jar[c.name] = c.value;
+    }
+
+    const loc = res.headers.get('location');
+    chain.push({ url, status: res.status, location: loc || null, setCookies: setCookies.length });
+
+    if (res.status >= 300 && res.status < 400 && loc && i < maxRedirects) {
+      try { url = new URL(loc, url).href; } catch (_) { break; }
+      continue;
+    }
+    break;
+  }
+
+  const netflixCookie = ['NetflixId', 'SecureNetflixId']
+    .filter(k => jar[k]).map(k => k + '=' + jar[k]).join('; ');
+
+  return {
+    netflixCookie: netflixCookie || null,
+    hasNetflix: !!(jar.NetflixId && jar.SecureNetflixId),
+    jar,
+    cookie: cookieHeaderFrom(jar),
+    chain,
+  };
+}
+
+// Extract cookies from a login URL, then read the account in one call.
+async function getNetflixInfoFromUrl(startUrl, opts = {}) {
+  const resolved = await resolveCookiesFromUrl(startUrl, opts);
+  if (!resolved.netflixCookie) {
+    return {
+      authenticated: false,
+      reason: 'No NetflixId/SecureNetflixId cookie was returned by that URL',
+      cookiesResolved: resolved,
+    };
+  }
+  const info = await getNetflixInfo(resolved.netflixCookie);
+  info.cookiesResolved = resolved;
+  return info;
+}
+
+module.exports = {
+  getNetflixInfo,
+  getNetflixInfoFromUrl,
+  resolveCookiesFromUrl,
+  getAccountInfo,
+  getNftoken,
+  extractNetflixId,
+};
 
 // ─── CLI ────────────────────────────────────────────────────────────────────
 if (require.main === module) {
-  const cookie = process.argv.slice(2).join(' ').trim();
-  if (!cookie) {
-    console.error('Usage: node nf-account.js "NetflixId=...; SecureNetflixId=...;"');
+  const input = process.argv.slice(2).join(' ').trim();
+  if (!input) {
+    console.error('Usage:\n  node nf-account.js "NetflixId=...; SecureNetflixId=...;"\n  node nf-account.js "https://your-login-url"');
     process.exit(1);
   }
-  getNetflixInfo(cookie)
+  const run = /^https?:\/\//i.test(input) ? getNetflixInfoFromUrl(input) : getNetflixInfo(input);
+  run
     .then(info => console.log(JSON.stringify(info, null, 2)))
     .catch(e => { console.error('Error:', e.message); process.exit(1); });
 }

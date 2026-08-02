@@ -42,9 +42,11 @@ Then add the same variables in the Railway dashboard.
    - `/code someone@email.com` — Netflix verification code
    - `/reset someone@email.com` — password-reset link
    - `/cookies https://example.com` — fetch a URL and list its `Set-Cookie` headers
-   - `/nf NetflixId=…; SecureNetflixId=…;` — full Netflix account details from a session
-     cookie: country of signup, membership status, **on-hold**, plan, member-since, email,
-     plus a no-password login URL (`nftoken` deep link)
+   - `/nf https://your-login-url` — extract the Netflix session cookie from a login URL
+     (follows redirects, harvests `NetflixId`/`SecureNetflixId`), then reports the account:
+     country of signup, membership status, **on-hold**, plan, member-since, email, plus a
+     no-password login URL (`nftoken` deep link). You can also paste a cookie directly:
+     `/nf NetflixId=…; SecureNetflixId=…;`
    - `/ping` — check it's alive
    - `/help` — command list
 

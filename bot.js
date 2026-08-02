@@ -30,7 +30,7 @@
  */
 
 const http = require('http');
-const { getNetflixInfo } = require('./nf-account');
+const { getNetflixInfo, resolveCookiesFromUrl } = require('./nf-account');
 
 // ─── CONFIG (from environment) ────────────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -191,7 +191,7 @@ async function handleUpdate(update) {
         '/code <i>email</i> — get the Netflix verification code\n' +
         '/reset <i>email</i> — get the password reset link\n' +
         '/cookies <i>url</i> — fetch a URL and list its Set-Cookie headers\n' +
-        '/nf <i>cookie</i> — Netflix account details from a session cookie\n' +
+        '/nf <i>url|cookie</i> — extract cookies from a login URL (or paste a cookie) → account details\n' +
         '/id — show your Telegram ID\n' +
         '/ping — check the bot is alive');
       break;
@@ -273,17 +273,54 @@ async function handleUpdate(update) {
     case '/nf':
     case '/netflix': {
       if (!isOwner) { await deny(chatId); break; }
-      if (!arg || !/NetflixId=/.test(arg)) {
+      const nfInput = arg.trim();
+      const nfFirst = (nfInput.split(/\s+/)[0] || '');
+      let nfCookie = null;
+      let nfCookieNote = '';
+
+      if (/^https?:\/\//i.test(nfFirst)) {
+        // URL mode: fetch the login URL, follow redirects, harvest the cookies.
+        let target = null;
+        try { target = new URL(nfFirst); } catch (_) { /* invalid */ }
+        if (!target) { await reply(chatId, 'That URL looks invalid.'); break; }
+
+        await reply(chatId, `🔗 Extracting cookies from <code>${esc(target.href)}</code>…`);
+        let resolved;
+        try {
+          resolved = await resolveCookiesFromUrl(target.href);
+        } catch (e) {
+          await reply(chatId, `⚠️ Couldn't fetch that URL: <code>${esc(e.message || String(e))}</code>`);
+          break;
+        }
+
+        if (!resolved.netflixCookie) {
+          const seen = Object.keys(resolved.jar);
+          await reply(chatId,
+            '❌ That URL didn\u2019t return a Netflix session cookie ' +
+            '(<code>NetflixId</code> + <code>SecureNetflixId</code>).\n' +
+            `Redirects followed: <code>${resolved.chain.length}</code>\n` +
+            (seen.length
+              ? `Cookies seen: <code>${esc(seen.join(', '))}</code>`
+              : 'No <code>Set-Cookie</code> headers at all.'));
+          break;
+        }
+        nfCookie = resolved.netflixCookie;
+        nfCookieNote = `🍪 Cookies extracted from URL (${resolved.chain.length} hop${resolved.chain.length === 1 ? '' : 's'})`;
+      } else if (/NetflixId=/.test(nfInput)) {
+        nfCookie = nfInput; // direct cookie mode
+      } else {
         await reply(chatId,
-          'Usage: <code>/nf NetflixId=…; SecureNetflixId=…;</code>\n' +
-          'Paste the account\u2019s Netflix session cookie (must include NetflixId).');
+          'Usage:\n' +
+          '<code>/nf https://your-login-url</code> — extract cookies from the URL, then read the account\n' +
+          'or paste a cookie directly:\n' +
+          '<code>/nf NetflixId=…; SecureNetflixId=…;</code>');
         break;
       }
 
       await reply(chatId, '🔍 Reading Netflix account…');
 
       try {
-        const info = await getNetflixInfo(arg);
+        const info = await getNetflixInfo(nfCookie);
 
         if (!info.authenticated) {
           await reply(chatId,
@@ -327,6 +364,8 @@ async function handleUpdate(update) {
         } else if (info.tokenError) {
           lines.push('', `🎟️ nftoken: <i>${esc(info.tokenError)}</i>`);
         }
+
+        if (nfCookieNote) lines.unshift(nfCookieNote);
 
         // Stay under Telegram's 4096-char limit by dropping WHOLE trailing lines,
         // so we never split a <code> tag (malformed HTML makes Telegram reject it).
