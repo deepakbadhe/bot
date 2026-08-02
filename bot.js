@@ -498,19 +498,9 @@ async function handleUpdate(update) {
     case '/hold':
     case '/holds': {
       if (!isOwner) { await deny(chatId); break; }
-      const all = store.holds();
-      if (!all.length) {
-        await reply(chatId, 'No on-hold accounts saved. Run <code>/scan</code> with some login URLs first.');
-        break;
-      }
-      // Hide accounts that can't be retried right now — only actionable
-      // (retry-eligible or unknown) holds are worth showing on /hold.
-      const notEligible = a => a.hold && String(a.hold.retryEligibility || '').toUpperCase() === 'NOT_ELIGIBLE';
-      const list = all.filter(a => !notEligible(a));
-      const hiddenCount = all.length - list.length;
+      const list = store.holds();
       if (!list.length) {
-        await reply(chatId,
-          `No retry-eligible on-hold accounts — all ${all.length} on hold are NOT_ELIGIBLE to retry right now.`);
+        await reply(chatId, 'No on-hold accounts saved. Run <code>/scan</code> with some login URLs first.');
         break;
       }
       // Group by country so every account from the same country is listed
@@ -532,14 +522,10 @@ async function handleUpdate(update) {
         const rows = groups.get(key).sort((p, q) => numId(p.id) - numId(q.id));
         lines.push('', `<b>${esc(key)}</b> (${rows.length})`);
         for (const a of rows) {
-          lines.push(
-            `#${a.id} — <code>${esc(a.email || '—')}</code>` +
-            ` — ${esc((a.plan && a.plan.name) || a.membershipStatus || '—')}` +
-            (a.hold && a.hold.retryEligibility ? ` — retry: <code>${esc(a.hold.retryEligibility)}</code>` : ''));
+          lines.push(`#${a.id} — <code>${esc(a.email || '—')}</code>`);
         }
       }
       lines.push('', 'Get a login URL with <code>/get &lt;id&gt;</code>, then <code>/done &lt;id&gt;</code> once fixed.');
-      if (hiddenCount) lines.push(`<i>${hiddenCount} not-eligible on hold hidden.</i>`);
       await sendChunked(chatId, lines);
       break;
     }
